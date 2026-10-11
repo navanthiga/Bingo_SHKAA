@@ -9,6 +9,48 @@ type Submission = { task_id: number; response_text: string | null; storage_path:
 type WinningTask = { tileIndex: number; taskId: number; title: string; responseText: string | null; evidenceUrl: string | null; submittedAt: string };
 type WinningSummary = { participantName: string; winningLine: number[]; winningTasks: WinningTask[] };
 const STORAGE_KEY = "shkaa-bingo-participant";
+const MAX_COMPRESSED_BYTES = 500 * 1024;
+
+/** Compresses any supported browser-decodable image to a JPEG no larger than 500 KB. */
+async function compressImageTo500KB(input: File): Promise<File> {
+  if (!input.type.startsWith("image/")) throw new Error("Please choose an image file.");
+
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(input);
+  } catch {
+    throw new Error("This image could not be opened. Please try a JPG, PNG or WebP image.");
+  }
+
+  try {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Your browser could not process this image. Please try another image.");
+
+    // Start at a phone-friendly size, then shrink further only if needed to meet the hard size cap.
+    let scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    for (let dimensionPass = 0; dimensionPass < 10; dimensionPass++) {
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      // JPEG has no transparency, so white is used behind transparent PNG/WebP pixels.
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+
+      for (const quality of [0.82, 0.72, 0.62, 0.52, 0.42, 0.32, 0.22, 0.12]) {
+        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/jpeg", quality));
+        if (blob && blob.size <= MAX_COMPRESSED_BYTES) {
+          const baseName = input.name.replace(/\.[^.]+$/, "") || "evidence";
+          return new File([blob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+        }
+      }
+      scale *= 0.75;
+    }
+  } finally {
+    bitmap.close();
+  }
+  throw new Error("This image could not be reduced to 500 KB. Please choose another image.");
+}
 
 export default function Home() {
   const [participant, setParticipant] = useState<Participant | null>(null);
@@ -81,7 +123,13 @@ export default function Home() {
       const form = new FormData();
       form.append("participantId", participant.id); form.append("code", participant.code); form.append("taskId", String(active.id));
       form.append("responseText", responseText.trim());
-      if (file) form.append("file", file);
+      if (file) {
+        setNotice("Compressing image to 500 KB or less…");
+        const compressedFile = await compressImageTo500KB(file);
+        if (compressedFile.size > MAX_COMPRESSED_BYTES) throw new Error("Image compression failed. Please choose another image.");
+        form.append("file", compressedFile, compressedFile.name);
+        setNotice(`Image compressed to ${(compressedFile.size / 1024).toFixed(0)} KB. Saving your challenge…`);
+      }
       const res = await fetch("/api/submit-task", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Submission failed.");
@@ -206,7 +254,7 @@ export default function Home() {
           <h2 id="task-modal-title">{active.title}</h2><p>{active.helper}</p>
           <form onSubmit={submitTask} className="task-form">
             {active.kind==="photo" ? <label className="upload-zone">
-              <ImagePlus size={28}/><strong>{file ? file.name : "Choose a photo or screenshot"}</strong><span>JPG, PNG or WebP · Max 4 MB</span>
+              <ImagePlus size={28}/><strong>{file ? file.name : "Choose a photo or screenshot"}</strong><span>JPG, PNG or WebP · Automatically compressed to 500 KB or less before upload</span>
               <input type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>setFile(e.target.files?.[0] ?? null)} required/>
             </label> : <label>Your response<textarea value={responseText} onChange={e=>setResponseText(e.target.value)} placeholder="Write your answer here…" rows={4} maxLength={1000} required/></label>}
             {error && <p className="error-message">{error}</p>}

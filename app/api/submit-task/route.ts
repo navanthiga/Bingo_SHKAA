@@ -3,8 +3,8 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { TASKS } from "@/lib/tasks";
 
 export const runtime = "nodejs";
-const MAX_FILE_SIZE = 4 * 1024 * 1024;
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_FILE_SIZE = 500 * 1024;
+const ALLOWED_TYPES = ["image/jpeg"];
 
 export async function POST(request: Request) {
   let uploadedPath: string | null = null;
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     if (task.kind === "text" && !responseText) return NextResponse.json({ error: "Please fill in the required answer." }, { status: 400 });
     if (task.kind === "photo" && !(file instanceof File)) return NextResponse.json({ error: "Please upload a photo or screenshot." }, { status: 400 });
     if (file instanceof File && (!ALLOWED_TYPES.includes(file.type) || file.size > MAX_FILE_SIZE)) {
-      return NextResponse.json({ error: "Use a JPG, PNG or WebP image up to 4 MB." }, { status: 400 });
+      return NextResponse.json({ error: "Images must be compressed to 500 KB or less before upload. Please reselect the image and try again." }, { status: 400 });
     }
 
     const db = supabaseAdmin();
